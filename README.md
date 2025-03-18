@@ -134,3 +134,75 @@ edges:
     source: "2"
     target: "3"
     animated: true
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Setting Up OAuth in ~/.databricks.cfg
+To use OAuth authentication, update your ~/.databricks.cfg file with the following:
+
+[DEFAULT]
+host = https://adb-xxxx.azuredatabricks.net  # Replace with your Databricks workspace URL
+auth_type = oauth
+
+
+
+C:\Users\your_username\.databricks.cfg
+
+
+~/.databricks.cfg
+
+
+
+
+import os
+import yaml
+from databricks.sdk import WorkspaceClient
+
+def to_databricks_soda_configuration(server):
+    # Initialize Databricks OAuth client
+    client = WorkspaceClient(
+        host=os.getenv("DATACONTRACT_DATABRICKS_SERVER_HOSTNAME"),
+        config_path=os.path.expanduser("~/.databricks.cfg")  # Ensure OAuth config is set up
+    )
+    
+    http_path = os.getenv("DATACONTRACT_DATABRICKS_HTTP_PATH")
+    host = server.host if server.host else client.config.host
+    
+    if not host:
+        raise ValueError("DATACONTRACT_DATABRICKS_SERVER_HOSTNAME environment variable is not set")
+    
+    soda_configuration = {
+        f"data_source {server.type}": {
+            "type": "spark",
+            "method": "databricks",
+            "host": host,
+            "catalog": server.catalog,
+            "schema": server.schema_,
+            "http_path": http_path,
+            "auth_type": "oauth"
+        }
+    }
+    
+    soda_configuration_str = yaml.dump(soda_configuration)
+    return soda_configuration_str
+
+
