@@ -172,20 +172,19 @@ C:\Users\your_username\.databricks.cfg
 
 
 
-
 import os
 import yaml
-from databricks.sdk import WorkspaceClient
+from databricks.sdk import WorkspaceClient, Config
 
 def to_databricks_soda_configuration(server):
-    # Initialize Databricks OAuth client
-    client = WorkspaceClient(
-        host=os.getenv("DATACONTRACT_DATABRICKS_SERVER_HOSTNAME"),
-        config_path=os.path.expanduser("~/.databricks.cfg")  # Ensure OAuth config is set up
-    )
+    # Load Databricks OAuth Configuration
+    config = Config()
+    if not config.token:
+        raise ValueError("OAuth authentication failed: No token available. Run 'databricks auth login'")
     
+    access_token = config.token  # Explicitly fetch OAuth token
     http_path = os.getenv("DATACONTRACT_DATABRICKS_HTTP_PATH")
-    host = server.host if server.host else client.config.host
+    host = server.host if server.host else os.getenv("DATACONTRACT_DATABRICKS_SERVER_HOSTNAME")
     
     if not host:
         raise ValueError("DATACONTRACT_DATABRICKS_SERVER_HOSTNAME environment variable is not set")
@@ -198,11 +197,13 @@ def to_databricks_soda_configuration(server):
             "catalog": server.catalog,
             "schema": server.schema_,
             "http_path": http_path,
-            "auth_type": "oauth"
+            "auth_type": "oauth",
+            "access_token": access_token  # Pass OAuth token explicitly
         }
     }
     
     soda_configuration_str = yaml.dump(soda_configuration)
     return soda_configuration_str
+
 
 
