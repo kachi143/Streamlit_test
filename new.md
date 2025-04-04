@@ -66,3 +66,53 @@ The model gives a grounded, context-aware answer, strictly based on your own dat
 ✅ Use filters to restrict by metadata (e.g., document type, tenant).
 ✅ Cache embeddings to avoid repeated compute costs.
 ✅ Use user_id to log and trace requests for fine-tuning and auditing.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+🔹 Step 1: Enable Managed Identity on the VM
+Go to your VM → Identity → System assigned
+Turn it On
+🔹 Step 2: Assign Azure Roles
+You must give your VM permission to access services.
+
+1. For Azure Cognitive Search:
+
+Go to your Search service → Access control (IAM) → Add role:
+
+Search Index Data Reader
+Assign to your VM name (as a principal)
+2. For Azure OpenAI:
+
+Go to your OpenAI resource → IAM → Add role:
+
+Cognitive Services User
+Assign to VM
