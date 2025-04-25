@@ -1,0 +1,38 @@
+FIND-ID and CNTRL-ID
+
+
+
+import pandas as pd
+
+# Load the Excel file
+input_path = '/app1/test/123/export.xlsx'
+df = pd.read_excel(input_path)
+
+# Prepare a list to store results
+results = []
+
+# Loop through each row
+for idx, row in df.iterrows():
+    find_id = row['FIND-ID']
+    cntrl_id = row['CNTRL-ID']
+
+    # ---- AZURE OPEN AI SEARCH (Pseudo-code) ----
+    # Replace this with your actual Azure OpenAI Search logic
+    # For example: response = azure_search(find_id, cntrl_id)
+    response = f"Dummy response for {find_id}, {cntrl_id}"  # Placeholder
+
+    # Save result
+    results.append({
+        'FIND-ID': find_id,
+        'CNTRL-ID': cntrl_id,
+        'RESPONSE': response
+    })
+
+# Create a new DataFrame from results
+output_df = pd.DataFrame(results)
+
+# Write to new Excel file
+output_path = '/app1/test/123/azure_search_results.xlsx'
+output_df.to_excel(output_path, index=False)
+
+print(f"Results written to {output_path}")
