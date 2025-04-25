@@ -196,3 +196,103 @@ for result in results:
     print("Content:", result.get("content"))
     print("Sourcefile:", result.get("sourcefile"))
     print("---")
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Practical Example: Handle Empty Results
+# ... (all the code for filter building above remains the same) ...
+
+results = search_client.search(
+    search_text="",
+    vector_queries=vector_query,
+    select=["content", "sourcefile"],
+    filter=odata_filter
+)
+
+# Convert iterator to list
+results_list = list(results)
+
+if not results_list:
+    print("No results found for the given Finding IDs and Control IDs.")
+else:
+    for result in results_list:
+        print("Content:", result.get("content"))
+        print("Sourcefile:", result.get("sourcefile"))
+        print("---")
+You can also wrap in a function:
+def vector_search_by_ids(search_client, embedding, fnd_ids, abc_ids):
+    filter_clauses = []
+    if fnd_ids:
+        fnd_filter = " or ".join([f"finding_id eq '{fid}'" for fid in fnd_ids])
+        filter_clauses.append(f"({fnd_filter})")
+    if abc_ids:
+        abc_filter = " or ".join([f"control_id eq '{cid}'" for cid in abc_ids])
+        filter_clauses.append(f"({abc_filter})")
+    odata_filter = " and ".join(filter_clauses) if filter_clauses else None
+
+    vector_query = [{
+        "kind": "vector",
+        "vector": embedding,
+        "fields": "contentVector",
+        "k_nearest_neighbors": 5
+    }]
+
+    results = search_client.search(
+        search_text="",
+        vector_queries=vector_query,
+        select=["content", "sourcefile"],
+        filter=odata_filter
+    )
+    results_list = list(results)
+    if not results_list:
+        print("No results found for the given Finding IDs and Control IDs.")
+    else:
+        for result in results_list:
+            print("Content:", result.get("content"))
+            print("Sourcefile:", result.get("sourcefile"))
+            print("---")
+    return results_list
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
