@@ -92,3 +92,107 @@ Details: Our team proposes implementing an automated log rotation and deletion p
     final_prompt = generate_remediation_prompt(uploaded_remediation_doc)
     print("\nGenerated Prompt for LLM:")
     print(final_prompt)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+def vector_search_by_ids(search_client, embedding, fnd_ids, abc_ids):
+    filter_clauses = []
+    if fnd_ids:
+        fnd_filter = " or ".join([f"finding_id eq '{fid}'" for fid in fnd_ids])
+        filter_clauses.append(f"({fnd_filter})")
+    if abc_ids:
+        abc_filter = " or ".join([f"control_id eq '{cid}'" for cid in abc_ids])
+        filter_clauses.append(f"({abc_filter})")
+    odata_filter = " and ".join(filter_clauses) if filter_clauses else None
+
+    vector_query = [{
+        "kind": "vector",
+        "vector": embedding,
+        "fields": "contentVector",
+        "k_nearest_neighbors": 5
+    }]
+
+    results = search_client.search(
+        search_text="",
+        vector_queries=vector_query,
+        select=["content", "sourcefile"],
+        filter=odata_filter
+    )
+    return list(results)
+
+
+
+
+
+
+(finding_id eq 'FND-1234' or finding_id eq 'FND-5678') and (control_id eq 'ABC-1111' or control_id eq 'ABC-2222')
+
+
+
+
+
+from azure.search.documents import SearchClient
+from azure.core.credentials import AzureKeyCredential
+
+# --- Assume the below are already defined ---
+endpoint = "https://<YOUR-SEARCH-SERVICE>.search.windows.net"
+index_name = "<YOUR-INDEX-NAME>"
+api_key = "<YOUR-ADMIN-KEY>"
+search_client = SearchClient(endpoint, index_name, AzureKeyCredential(api_key))
+
+embedding = [0.1, 0.2, 0.3, ...]   # Replace with your actual embedding
+
+# --- Extract IDs from your document/text line ---
+sample_text = "Here are FND-1234, FND-5678 and also ABC-1111, ABC-2222."
+fnd_ids, abc_ids = extract_all_ids(sample_text)
+
+# --- Dynamically build the OData filter for all IDs ---
+filter_clauses = []
+if fnd_ids:
+    fnd_filter = " or ".join([f"finding_id eq '{fid}'" for fid in fnd_ids])
+    filter_clauses.append(f"({fnd_filter})")
+if abc_ids:
+    abc_filter = " or ".join([f"control_id eq '{cid}'" for cid in abc_ids])
+    filter_clauses.append(f"({abc_filter})")
+
+odata_filter = " and ".join(filter_clauses) if filter_clauses else None
+
+# --- Vector query definition ---
+vector_query = [{
+    "kind": "vector",
+    "vector": embedding,
+    "fields": "contentVector",      # Replace with your vector field name
+    "k_nearest_neighbors": 5
+}]
+
+# --- Run the search with filter ---
+results = search_client.search(
+    search_text="",
+    vector_queries=vector_query,
+    select=["content", "sourcefile"],
+    filter=odata_filter  # This filters by all extracted IDs
+)
+
+for result in results:
+    print("Content:", result.get("content"))
+    print("Sourcefile:", result.get("sourcefile"))
+    print("---")
