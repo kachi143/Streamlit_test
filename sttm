@@ -1,0 +1,132 @@
+import pandas as pd
+import openai
+import logging
+import threading
+from concurrent.futures import ThreadPoolExecutor
+from functools import lru_cache
+
+# --- Azure OpenAI Configuration ---
+openai.api_type = "azure"
+openai.api_base = "https://<YOUR-AZURE-OPENAI-ENDPOINT>.openai.azure.com/"
+openai.api_version = "2023-05-15"
+openai.api_key = "<YOUR-AZURE-OPENAI-KEY>"
+deployment_name = "<YOUR-DEPLOYMENT-NAME>"  # Example: "gpt-35-turbo"
+
+# --- Logging Configuration ---
+logging.basicConfig(filename="openai_sql_generation.log", level=logging.INFO, 
+                    format="%(asctime)s - %(levelname)s - %(message)s")
+
+# Thread-safe cache dictionary for prompts
+prompt_cache = {}
+cache_lock = threading.Lock()
+
+def query_openai(prompt):
+    """Convert plain English to SQL expression with caching and logging."""
+    with cache_lock:
+        if prompt in prompt_cache:
+            logging.info(f"Cache hit for prompt: {prompt}")
+            return prompt_cache[prompt]
+    
+    logging.info(f"Calling Azure OpenAI for prompt: {prompt}")
+    try:
+        response = openai.ChatCompletion.create(
+            engine=deployment_name,
+            messages=[
+                {"role": "system", "content": "You are an expert SQL assistant. Convert plain English into correct SQL expressions."},
+                {"role": "user", "content": prompt}
+            ],
+            temperature=0,
+            max_tokens=150
+        )
+        result = response.choices[0].message['content'].strip()
+        with cache_lock:
+            prompt_cache[prompt] = result
+        logging.info(f"OpenAI Response for prompt: {prompt}\nResponse: {result}")
+        return result
+    except Exception as e:
+        logging.error(f"Error during OpenAI API call: {e}")
+        return "-- OpenAI Failed to Generate SQL --"
+
+def load_mapping(file_path):
+    return pd.read_excel(file_path)
+
+def process_row(row):
+    src_table = row['source_table']
+    src_field = row['source_field']
+    tgt_field = row['target_field']
+    transform = row['transformation_rule']
+    join_condition = row['join_condition']
+    source_schema = row['source_schema']
+    target_table = row['target_table']
+
+    # Handle Transformation
+    if pd.notna(transform):
+        if any(keyword in transform.lower() for keyword in ['convert', 'uppercase', 'round', 'trim', 'format', 'calculate']):
+            sql_expr = query_openai(f"Convert the following transformation into SQL for field {src_field}: {transform}")
+        else:
+            sql_expr = transform
+        select_clause = f"{sql_expr} AS {tgt_field}"
+    else:
+        select_clause = f"{src_table}.{src_field} AS {tgt_field}"
+
+    # Handle Join Condition
+    join_clause = ""
+    if pd.notna(join_condition):
+        if "join" in join_condition.lower() or "on" in join_condition.lower():
+            join_clause = query_openai(f"Convert the following join condition into SQL JOIN syntax: {join_condition}")
+        else:
+            join_clause = join_condition
+
+    return {
+        "source_schema": source_schema,
+        "target_table": target_table,
+        "select_clause": select_clause,
+        "source_table": src_table,
+        "join_clause": join_clause
+    }
+
+def generate_sql_records(mapping_df):
+    final_records = []
+    with ThreadPoolExecutor(max_workers=5) as executor:
+        processed_rows = list(executor.map(process_row, [row[1] for row in mapping_df.iterrows()]))
+
+    # Grouping the processed rows
+    grouped_data = {}
+    for row in processed_rows:
+        key = (row["source_schema"], row["target_table"])
+        grouped_data.setdefault(key, []).append(row)
+
+    # Build SQL per group
+    for (source_schema, target_table), rows in grouped_data.items():
+        select_clauses = [r["select_clause"] for r in rows]
+        source_tables = {r["source_table"] for r in rows}
+        join_clauses = {r["join_clause"] for r in rows if r["join_clause"]}
+
+        from_clause = f"FROM {source_schema}.{list(source_tables)[0]}"
+        joins = ""
+        if len(source_tables) > 1 and join_clauses:
+            joins = "\n" + "\n".join(join_clauses)
+
+        sql_query = f"SELECT\n    " + ",\n    ".join(select_clauses) + f"\n{from_clause}{joins};"
+
+        final_records.append({
+            "source_schema": source_schema,
+            "target_table": target_table,
+            "output_sql": sql_query
+        })
+
+    return pd.DataFrame(final_records)
+
+def save_output(df, output_path):
+    df.to_excel(output_path, index=False)
+    logging.info(f"Generated output file: {output_path}")
+    print(f"✅ SQL output written to {output_path}")
+
+# --- Execution ---
+if __name__ == "__main__":
+    excel_file = "source_target_mapping.xlsx"  # Update this path
+    output_file = "final_sql_output.xlsx"
+
+    mapping_df = load_mapping(excel_file)
+    final_df = generate_sql_records(mapping_df)
+    save_output(final_df, output_file)
