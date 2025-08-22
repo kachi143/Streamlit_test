@@ -1,0 +1,308 @@
+
+
+
+
+# Description:
+# We need a Python/PySpark solution that reads requirements from an Excel or CSV file and outputs corresponding SQL queries. The Excel/CSV file has static column names describing each part of the requirement. The program should map the information from each row to generate a SQL query. Use PySpark if possible to handle large data files; otherwise, regular Python is acceptable.
+
+# Requirements:
+# 1. Read data from an Excel file (e.g., .xlsx, .xls) or CSV file into a DataFrame using pandas or PySpark (Spark DataFrame).
+# 2. Assume the column names are static, e.g., 'Requirement_ID', 'Requirement_Description', 'Table_Name', 'Column_Names', 'Criteria', etc.
+# 3. For each row, construct an SQL query based on the columns. 
+#    - Example: If 'Table_Name' column has the name of the table and 'Column_Names' lists the columns to select, the SQL should select those columns.
+#    - Use the 'Criteria' column (if present) to form the WHERE clause, e.g., WHERE <column>=<value> or other conditions.
+# 4. Store or print each SQL query as a string; optionally, save them into a new column in the DataFrame.
+# 5. Ensure that the code is modular and can be easily extended for additional columns or translation rules.
+# 6. Handle common edge cases, such as missing or blank columns, special characters in table or column names, and different data formats (Excel vs CSV).
+# 7. Include error handling to log or report issues encountered during reading or processing.
+
+# Deliverables:
+# - A complete Python (and PySpark, if available) script that performs the above tasks.
+# - Include comments explaining each step for clarity and future maintenance.
+# - Optionally, save the output SQL queries into a separate CSV or text file.
+
+# Begin code:
+
+
+
+
+
+
+# Additional context:
+# - The script should work with both Excel (.xlsx/.xls) and CSV files.
+# - If using PySpark, include the necessary SparkSession initialization and reading methods.
+# - If using pandas, use `pd.read_excel()` or `pd.read_csv()`.
+# - Assume the following static column names in the input file:
+#     - 'Requirement_ID': a unique identifier for each requirement.
+#     - 'Requirement_Description': text describing the requirement (may not directly influence the SQL).
+#     - 'Table_Name': target database table.
+#     - 'Column_Names': comma-separated column names to include in SELECT clause.
+#     - 'Criteria': textual representation of the WHERE clause conditions.
+#   You can add more columns if needed, but ensure they are handled cleanly in the script.
+
+# The function build_sql(row: dict) should:
+#   - Take the values from Table_Name, Column_Names, and Criteria fields.
+#   - Return an SQL string like:
+#     f"SELECT {row['Column_Names']} FROM {row['Table_Name']}"
+#       + (f" WHERE {row['Criteria']}" if row['Criteria'] else '')
+#   - Strip or handle any leading/trailing whitespace.
+
+# If using PySpark:
+#   - Use spark.read.format("csv").load() or spark.read.format("excel").options() to read input.
+#   - Optionally convert the DataFrame to a list of dicts (e.g., via .collect()) or iterate directly to build queries.
+#   - You can add a new column "SQL_Query" to the DataFrame with the generated SQL.
+
+# If using pure Python/pandas:
+#   - Use DataFrame.iterrows() or apply() to build SQL queries row-wise.
+#   - Save the resulting DataFrame to a new file if needed.
+
+# Finally:
+# - Provide a sample main() function that demonstrates how to invoke the reading and SQL-building logic.
+# - Ensure the code can be executed as a script or imported as a module without breaking.
+# - Print at least a few generated SQL queries for sample rows, or write them to an output file named 'output_sql.csv'.
+
+# End of prompt.
+
+
+
+
+
+
+
+
+# Goal
+# Write a robust Python program (with an optional PySpark path) that reads an Excel/CSV "requirements" file
+# with STATIC column names and generates validated SQL strings per row. The program must handle simple SELECTs,
+# joins, aggregates, window functions, filters, ordering, limits, parameterization, and multiple SQL dialects.
+
+# Execution Modes
+# - Mode A (pandas): Use pandas for small/medium files.
+# - Mode B (PySpark): Use PySpark for large files. Provide equivalent logic with Spark DataFrames when feasible.
+# The entrypoint auto-detects if PySpark is available via an argument (e.g. --engine pandas|pyspark).
+
+# Input File
+# - Input is either Excel (.xlsx/.xls) or CSV (.csv). CLI flags: --input path, --sheet SHEETNAME (Excel only)
+# - Column names are STATIC and should be treated as canonical. Define and document them:
+#   Required:
+#     Requirement_ID            (string) unique id for the requirement
+#     SQL_Dialect               (string) one of: ansi, postgres, mysql, snowflake, mssql, oracle, bigquery
+#     Query_Type                (string) one of: select, insert_select, update, delete
+#     Target_Table              (string) main table for select/from or DML target
+#     Select_Columns            (string) comma-separated list; can include aliases and expressions
+#     Criteria                  (string) human-readable or compact DSL; see "Criteria Grammar" below
+#   Optional:
+#     Distinct_Flag             (string/bool) 'true'/'false'
+#     Group_By                  (string) comma-separated list of columns/expressions
+#     Having                    (string) criteria applying to grouped rows; same grammar as Criteria
+#     Order_By                  (string) comma-separated list with optional ASC/DESC
+#     Limit                     (int) max rows (or TOP in MSSQL)
+#     Offset                    (int) starting row offset; treat as 0 if missing
+#     Joins_JSON                (string) JSON array describing joins; see "Join JSON" below
+#     Window_Functions_JSON     (string) JSON array describing window expressions to add to SELECT; see below
+#     Parameters_JSON           (string) JSON object for named parameters; e.g. {"start_date":"2024-01-01"}
+#     Quoting_Mode              (string) one of: none, ansi, dialect_default
+#     Output_Template           (string) optional Jinja-like template overriding full SQL assembly; see "Templating"
+#     Notes                     (string) free text, ignored by compiler but carried along to outputs
+#   If a column is missing, apply safe defaults and log a warning.
+
+# SQL Dialect Handling
+# - Implement a small dialect adapter:
+#   - Identifier quoting: 
+#       ansi -> "id", mysql -> `id`, postgres/snowflake/bigquery -> "id" (or backticks for bigquery acceptable),
+#       mssql -> [id], oracle -> "ID"
+#   - String literal quoting: single quotes for all; escape embedded quotes safely.
+#   - Limit/Offset syntax:
+#       mysql/postgres/snowflake/bigquery -> LIMIT {Limit} OFFSET {Offset}
+#       mssql -> ORDER BY (SELECT 1); OFFSET {Offset} ROWS FETCH NEXT {Limit} ROWS ONLY
+#       oracle -> use FETCH FIRST {Limit} ROWS ONLY [OFFSET {Offset} ROWS]
+#   - ILIKE support: emulate with LOWER(col) LIKE LOWER(:param) if dialect lacks ILIKE.
+#   - TOP for MSSQL if no Offset present and Limit present (and Order_By may be optional).
+# - All generated SQL must be parameterizable when Parameters_JSON is provided.
+
+# Quoting & Escaping
+# - Apply identifier quoting IF Quoting_Mode is ansi or dialect_default.
+# - Never double-quote a fully-qualified name incorrectly. If name contains dots:
+#   - Split schema.table.column and quote each part per dialect rules.
+# - Escape string literals safely. Do not over-escape numeric/boolean/null.
+
+# Criteria Grammar (for Criteria & Having)
+# - Support two forms:
+#   1) JSON form (preferred if the cell starts with "{" or "["):
+#      Example:
+#         [{"col":"order_date","op":">=","val":"{{start_date}}"},
+#          {"col":"status","op":"IN","val":["SHIPPED","DELIVERED"]},
+#          {"col":"amount","op":"BETWEEN","val":[100,500]},
+#          {"col":"promo","op":"IS NULL"}]
+#      Operators to support: =, !=, <, <=, >, >=, IN, NOT IN, BETWEEN, LIKE, ILIKE, REGEXP/REGEXP_LIKE*, IS NULL, IS NOT NULL
+#      Combine with implicit AND unless "logic":"OR" is present in an item. Also support nested groups:
+#         {"group":[{...},{...}], "logic":"OR"}
+#      REGEXP: use dialect-appropriate function (e.g., REGEXP_LIKE in Oracle/Snowflake), or ~ in Postgres.
+#   2) Lightweight DSL string:
+#      - AND is default separator; allow explicit AND/OR with parentheses.
+#      - Support parameter tokens {{name}} replaced with Parameters_JSON safely.
+#      - Example:
+#        (order_date >= {{start_date}} AND status IN ('SHIPPED','DELIVERED')) OR amount BETWEEN 100 AND 500
+# - Null handling: "col = NULL" becomes "col IS NULL"; "col != NULL" becomes "col IS NOT NULL".
+
+# Join JSON
+# - Joins_JSON is a JSON array. Each item:
+#   {
+#     "type": "inner|left|right|full|cross",
+#     "table": "schema.table or table",
+#     "alias": "t2",
+#     "on": [{"left":"t1.id","op":"=","right":"t2.fk_id"}, {"..."}]   # for non-cross joins
+#   }
+# - Build the proper JOIN clauses. Honor identifier quoting and table aliasing.
+
+# Window_Functions_JSON
+# - JSON array where each item defines a computed column added to SELECT:
+#   {
+#     "alias": "running_total",
+#     "expr": "SUM(amount)",
+#     "partition_by": ["customer_id"],
+#     "order_by": ["order_date ASC", "id"],
+#     "frame": "ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW"   # optional
+#   }
+# - Render as: expr OVER (PARTITION BY ... ORDER BY ... frame)
+
+# Aggregations & Grouping
+# - If Group_By is non-empty, ensure all non-aggregated selected expressions appear in GROUP BY (best-effort parse).
+# - Having uses same parsing rules as Criteria.
+
+# Ordering
+# - Parse Order_By into safe tokens "expr [ASC|DESC]". Reject unsafe keywords.
+
+# Limits & Offsets
+# - Apply dialect-specific rendering rules described earlier.
+
+# DML Support (insert_select, update, delete)
+# - insert_select:
+#     - Use Target_Table as insert target.
+#     - Provide optional Insert_Columns (new optional column in input) for column list.
+#     - Use the same SELECT-building pipeline for the source query (may use Source_Table if provided; otherwise Target_Table).
+# - update:
+#     - Requires Set_JSON: [{"col":"status","val":"CLOSED"}, ...]
+#     - Optional From_Joins via Joins_JSON (dialect-dependent syntax; for dialects lacking FROM in UPDATE, emulate with subquery if needed).
+#     - Criteria applies to rows to be updated.
+# - delete:
+#     - Criteria selects rows to delete.
+#     - Optional joins via USING (Postgres) or subquery strategy for other dialects.
+
+# Parameterization
+# - If Parameters_JSON is present, allow {{param}} usage in Criteria/Having/Select_Columns/Order_By and in Window frames.
+# - Produce both:
+#   1) a "rendered" SQL string with dialect-safe placeholders (e.g., :name, %(name)s, ?), chosen per SQL_Dialect
+#   2) a dict of parameters for the placeholders
+# - Do NOT inline sensitive values; only inline when the dialect requires it (e.g., identifiers).
+
+# Validation
+# - Validate required columns per row. Collect errors with Requirement_ID:
+#   - Missing Target_Table or Select_Columns for select/insert_select
+#   - Invalid SQL_Dialect or Query_Type
+#   - Malformed JSON in Joins_JSON/Window_Functions_JSON/Parameters_JSON
+#   - Unsupported operators
+# - Output a structured report:
+#   - For each Requirement_ID: status=OK|ERROR, messages, and the final SQL (if OK)
+
+# Output
+# - Add columns to the output DataFrame:
+#     SQL_Rendered            (string) final SQL with placeholders or fully rendered per dialect strategy
+#     SQL_Params_JSON         (string) JSON of parameters
+#     Validation_Status       (string) OK|ERROR
+#     Validation_Messages     (string) semicolon-delimited
+# - Save outputs to:
+#     --out path (CSV by default), and optionally --out-excel path (XLSX)
+# - Also dump a per-row .sql file when --emit-files flag is provided (filenames based on Requirement_ID).
+
+# Logging
+# - Provide --log-level DEBUG|INFO|WARN|ERROR. Log key decisions and any fallbacks.
+
+# Templating (Optional)
+# - If Output_Template is provided (Jinja-like {{ }}), render the final SQL through the template.
+#   Available context keys: target_table, select_clause, from_clause, joins_clause, where_clause, group_by_clause,
+#   having_clause, order_by_clause, limit_offset_clause, insert_clause, update_set_clause, delete_clause,
+#   parameters (dict), dialect, quoting_mode, requirement_id.
+# - If template rendering fails, log and fall back to default assembly.
+
+# CLI
+# - Implement a CLI with argparse:
+#     python requirements_to_sql.py --input path/to/file.xlsx --sheet Requirements --engine pandas --out out.csv --dialect-default postgres
+#   --engine pandas|pyspark
+#   --dialect-default sets fallback when SQL_Dialect is empty.
+#   --emit-files to write per-row SQL files
+#   --out, --out-excel, --log-level
+
+# Code Structure (modules or sections)
+# - main()
+# - io: read_input_file(input_path, sheet)
+# - dialects: class Dialect with subclasses (PostgresDialect, MySQLDialect, etc.) implementing quoting & limit syntax
+# - parser: parse_select_columns, parse_order_by, parse_criteria(json_or_dsl), parse_join_json, parse_window_json
+# - builder: build_select_sql(row, dialect), build_insert_select_sql(row, dialect), build_update_sql(row, dialect), build_delete_sql(row, dialect)
+# - params: apply_parameters(text_or_json, params_dict, dialect)
+# - validate: validate_row(row) -> (status, messages)
+# - output: write_outputs(df, out_csv, out_excel, emit_files)
+# - utils: safe_split_commas, is_json, json_loads_safe, quote_identifier, qualify_name_parts
+
+# PySpark Path
+# - Initialize SparkSession only if --engine pyspark.
+# - Read CSV via spark.read.csv(header=True, inferSchema=False)
+# - Read Excel via third-party library only if available; otherwise document a fallback (e.g., convert Excel to CSV before).
+# - Use toPandas() if needed for final write-out, but keep memory in mind (document fallback chunking or write per partition).
+
+# Testing (minimal but useful)
+# - Include a small set of unit-like tests runnable with `python -m pytest -q` if pytest is available; otherwise a test() function:
+#   - Test equality, IN, BETWEEN, LIKE, ILIKE, IS NULL
+#   - Test joins (inner, left) with simple ON conditions
+#   - Test dialect limit/offset variations
+#   - Test window function rendering
+#   - Test template override
+#   - Test parameter replacement and parameter dict generation
+
+# Security / Safety
+# - Prevent SQL injection by:
+#   - Validating identifiers against a safe pattern (letters, digits, underscore, dot). Reject others unless quoted properly.
+#   - Using parameters for literal values, never string-concatenate user-provided values directly into SQL.
+# - Provide a --unsafe-allow-raw flag to bypass identifier checks (not recommended).
+
+# Examples
+# Example Row 1 (SELECT):
+#   SQL_Dialect=postgres
+#   Query_Type=select
+#   Target_Table=public.orders o
+#   Select_Columns=o.id, o.customer_id, SUM(o.amount) AS total_amount
+#   Distinct_Flag=false
+#   Group_By=o.id, o.customer_id
+#   Order_By=total_amount DESC
+#   Limit=100
+#   Offset=0
+#   Criteria=[{"col":"o.order_date","op":">=","val":"{{start_date}}"},{"col":"o.status","op":"IN","val":["SHIPPED","DELIVERED"]}]
+#   Parameters_JSON={"start_date":"2024-01-01"}
+#   Window_Functions_JSON=[{"alias":"rank_in_cust","expr":"RANK()","partition_by":["o.customer_id"],"order_by":["total_amount DESC"]}]
+# Expected: SELECT clause includes window col, GROUP BY, WHERE with parameters, ORDER BY, LIMIT/OFFSET.
+
+# Example Row 2 (JOIN):
+#   Joins_JSON=[{"type":"left","table":"public.customers c","alias":"c","on":[{"left":"o.customer_id","op":"=","right":"c.id"}]}]
+# Expected: FROM public.orders o LEFT JOIN public.customers c ON o.customer_id = c.id
+
+# Example Row 3 (DML UPDATE):
+#   SQL_Dialect=mssql
+#   Query_Type=update
+#   Target_Table=dbo.orders
+#   Set_JSON=[{"col":"status","val":"CLOSED"}]
+#   Criteria=(order_date < {{cutoff}} AND status = 'OPEN')
+#   Parameters_JSON={"cutoff":"2023-12-31"}
+# Expected: UPDATE with WHERE; use parameter placeholder style appropriate for MSSQL.
+
+# Deliverables
+# - A single Python script that implements everything above.
+# - In-code docstrings and comments.
+# - Reasonable defaults and helpful error messages.
+
+# Begin coding now.
+
+
+
+
+
+
+
